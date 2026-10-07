@@ -1,18 +1,16 @@
+// Legacy history storage: reads pre-backend records and stores only import progress markers.
 import {
   parseInterviewRecords,
   type InterviewRecord,
 } from "../types/interviewHistory";
 
 const STORAGE_KEY = "interview-history-v1";
+const IMPORTED_IDS_KEY = "interview-history-imported-v1";
 
 export type HistoryLoadResult =
   | { status: "ready"; records: InterviewRecord[] }
   | { status: "malformed"; records: []; error: string }
   | { status: "unavailable"; records: []; error: string };
-
-export type HistorySaveResult =
-  | { status: "saved" }
-  | { status: "failed"; error: string };
 
 export function loadInterviewHistory(): HistoryLoadResult {
   let storedValue: string | null;
@@ -53,16 +51,25 @@ export function loadInterviewHistory(): HistoryLoadResult {
   return { status: "ready", records };
 }
 
-export function saveInterviewHistory(
-  records: InterviewRecord[],
-): HistorySaveResult {
+export function parseImportedHistoryIds(): Set<string> {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
-    return { status: "saved" };
+    const parsed: unknown = JSON.parse(
+      window.localStorage.getItem(IMPORTED_IDS_KEY) ?? "[]",
+    );
+    return new Set(
+      Array.isArray(parsed)
+        ? parsed.filter((value): value is string => typeof value === "string")
+        : [],
+    );
   } catch {
-    return {
-      status: "failed",
-      error: "Browser storage could not save your history. Check available storage and try again.",
-    };
+    return new Set();
+  }
+}
+
+export function saveImportedHistoryIds(ids: Set<string>) {
+  try {
+    window.localStorage.setItem(IMPORTED_IDS_KEY, JSON.stringify([...ids]));
+  } catch {
+    // Backend import keys still make a retry idempotent if browser storage is unavailable.
   }
 }

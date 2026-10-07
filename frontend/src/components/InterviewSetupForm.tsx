@@ -1,48 +1,80 @@
-import { useState } from "react";
+// Setup form: captures interview details, context, and file selection for a saved prep record.
+import { useId, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
+import {
+  INTERVIEW_TYPE_OPTIONS,
+  normalizeInterviewType,
+} from "../services/interviewTypes";
+import type { InterviewSetup } from "../types/interviewSetup";
 
-// Describes the data we collect for an interview.
-type InterviewSetup = {
-  company: string;
-  role: string;
-  interviewType: string;
-  jobDescription: string;
-  jobDescriptionUrl: string;
-  instructions: string;
+type InterviewSetupFormProps = {
+  setup: InterviewSetup | null;
+  isSaving?: boolean;
+  onSave: (setup: InterviewSetup) => void | Promise<void>;
+  onCancel: () => void;
 };
 
-function InterviewSetupForm() {
-  const [company, setCompany] = useState("");
-  const [role, setRole] = useState("");
-  const [interviewType, setInterviewType] = useState("Recruiter call");
-  const [jobDescription, setJobDescription] = useState("");
-  const [jobDescriptionUrl, setJobDescriptionUrl] = useState("");
-  const [instructions, setInstructions] = useState("");
+function InterviewSetupForm({
+  setup,
+  isSaving = false,
+  onSave,
+  onCancel,
+}: InterviewSetupFormProps) {
+  const companyInputId = useId();
+  const roleInputId = useId();
+  const interviewTypeInputId = useId();
+  const otherTypeInputId = useId();
+  const urlInputId = useId();
+  const descriptionInputId = useId();
+  const instructionsInputId = useId();
+  const resumeTextInputId = useId();
+  const resumeInputId = useId();
+  const resumeHelpId = useId();
+
+  const [company, setCompany] = useState(setup?.company ?? "");
+  const [role, setRole] = useState(setup?.role ?? "");
+  const [interviewType, setInterviewType] = useState(
+    normalizeInterviewType(setup?.interviewType, "recruiter-call"),
+  );
+  const [otherInterviewType, setOtherInterviewType] = useState(
+    setup?.interviewType === "other" ? setup.interviewTypeOther ?? "" : "",
+  );
+  const [jobDescription, setJobDescription] = useState(
+    setup?.jobDescription ?? "",
+  );
+  const [jobDescriptionUrl, setJobDescriptionUrl] = useState(
+    setup?.jobDescriptionUrl ?? "",
+  );
+  const [instructions, setInstructions] = useState(
+    setup?.instructions ?? "",
+  );
+  const [resumeText, setResumeText] = useState(setup?.resumeText ?? "");
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [resumeError, setResumeError] = useState("");
-  const [isContextOpen, setIsContextOpen] = useState(false);
-
-  // null means the user hasn't submitted a setup yet.
-  const [submittedSetup, setSubmittedSetup] = useState<InterviewSetup | null>(
-    null,
+  const [resumeRemoved, setResumeRemoved] = useState(false);
+  const [isContextOpen, setIsContextOpen] = useState(
+    Boolean(
+      setup?.resumeFileName ||
+        setup?.jobDescription ||
+        setup?.jobDescriptionUrl ||
+        setup?.instructions,
+    ),
   );
+  const resumeInputRef = useRef<HTMLInputElement>(null);
 
   function handleResumeChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
 
+    if (!file) return;
+
     setResumeFile(null);
+    setResumeRemoved(true);
     setResumeError("");
 
-    // The user may cancel the file picker.
-    if (!file) {
-      return;
-    }
-
     const extension = file.name.split(".").pop()?.toLowerCase();
-    const allowedExtensions = ["pdf", "docx"];
     const maxSize = 5 * 1024 * 1024;
 
-    if (!extension || !allowedExtensions.includes(extension)) {
+    if (!extension || !(extension === "pdf" || extension === "docx")) {
       setResumeError("Please select a PDF or DOCX file.");
       event.target.value = "";
       return;
@@ -54,54 +86,69 @@ function InterviewSetupForm() {
       return;
     }
 
+    setResumeRemoved(false);
     setResumeFile(file);
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    // Prevent the browser from reloading the page.
     event.preventDefault();
 
     const cleanedCompany = company.trim();
     const cleanedRole = role.trim();
+    if (!cleanedCompany || !cleanedRole) return;
 
-    // Reject values that contain only spaces.
-    if (!cleanedCompany || !cleanedRole) {
+    const normalizedInterviewType =
+      interviewType === "other"
+        ? "other"
+        : normalizeInterviewType(interviewType, "recruiter-call");
+
+    const cleanedUrl = jobDescriptionUrl.trim();
+    if (cleanedUrl && !/^https?:\/\//i.test(cleanedUrl)) {
+      setResumeError("Please use a public http or https link.");
       return;
     }
 
-    // Save a snapshot of the form values.
-    setSubmittedSetup({
+    const nextSetup: InterviewSetup = {
+      id: setup?.id ?? crypto.randomUUID(),
       company: cleanedCompany,
       role: cleanedRole,
-      interviewType,
+      interviewType: normalizedInterviewType,
+      interviewTypeOther:
+        normalizedInterviewType === "other" ? otherInterviewType.trim() : undefined,
       jobDescription: jobDescription.trim(),
-      jobDescriptionUrl: jobDescriptionUrl.trim(),
+      jobDescriptionUrl: cleanedUrl,
       instructions: instructions.trim(),
-    });
+      resumeFileName:
+        resumeFile?.name ?? (resumeRemoved ? "" : setup?.resumeFileName ?? ""),
+      resumeText: resumeText.trim(),
+    };
+    onSave(nextSetup);
   }
 
   return (
     <main className="prep-page">
+      <nav className="prep-subnav" aria-label="Interview preparation">
+        <button className="back-button" type="button" onClick={onCancel}>
+          ← Saved setups
+        </button>
+      </nav>
       <header className="prep-heading">
-        <span className="section-kicker">GET READY</span>
-        <h1>Interview Prep</h1>
-        <p>Start with the role. Add any context that will help you prepare.</p>
+        <h1>{setup ? "Edit interview setup" : "New interview setup"}</h1>
       </header>
 
       <form className="prep-form" onSubmit={handleSubmit}>
         <section className="prep-core-fields" aria-labelledby="prep-basics">
           <div className="prep-section-heading">
             <h2 id="prep-basics">Interview details</h2>
-            <p>Just the essentials to get started.</p>
           </div>
 
           <div className="prep-fields-grid">
             <div>
-              <label htmlFor="company">Company</label>
+              <label htmlFor={companyInputId}>Company</label>
               <input
-                id="company"
+                id={companyInputId}
                 type="text"
-                placeholder="For example, Hubbell"
+                placeholder="Ex: Microsoft"
                 value={company}
                 onChange={(event) => setCompany(event.target.value)}
                 required
@@ -109,11 +156,11 @@ function InterviewSetupForm() {
             </div>
 
             <div>
-              <label htmlFor="role">Role</label>
+              <label htmlFor={roleInputId}>Role</label>
               <input
-                id="role"
+                id={roleInputId}
                 type="text"
-                placeholder="For example, Software Engineer"
+                placeholder="Ex: Software Engineer"
                 value={role}
                 onChange={(event) => setRole(event.target.value)}
                 required
@@ -121,20 +168,32 @@ function InterviewSetupForm() {
             </div>
 
             <div className="prep-type-field">
-              <label htmlFor="interviewType">Interview type</label>
+              <label htmlFor={interviewTypeInputId}>Interview type</label>
               <select
-                id="interviewType"
+                id={interviewTypeInputId}
                 value={interviewType}
-                onChange={(event) => setInterviewType(event.target.value)}
+                onChange={(event) =>
+                  setInterviewType(normalizeInterviewType(event.target.value))
+                }
               >
-                <option>Recruiter call</option>
-                <option>Manager round</option>
-                <option>Technical round</option>
-                <option>Behavioral round</option>
-                <option>Live coding</option>
-                <option>Online assessment</option>
-                <option>Other</option>
+                {INTERVIEW_TYPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
+              {interviewType === "other" && (
+                <div>
+                  <label htmlFor={otherTypeInputId}>Describe the interview type</label>
+                  <input
+                    id={otherTypeInputId}
+                    type="text"
+                    placeholder="For example: Panel interview"
+                    value={otherInterviewType}
+                    onChange={(event) => setOtherInterviewType(event.target.value)}
+                  />
+                </div>
+              )}
             </div>
           </div>
         </section>
@@ -147,30 +206,37 @@ function InterviewSetupForm() {
           <summary>Add context (optional)</summary>
           <div className="prep-context-fields">
             <div className="prep-resume-field">
-              <label htmlFor="resume">Resume file</label>
+              <label htmlFor={resumeInputId}>
+                Resume file selection (not uploaded or read yet)
+              </label>
               <input
-                id="resume"
+                ref={resumeInputRef}
+                id={resumeInputId}
                 type="file"
                 accept=".pdf,.docx"
                 onChange={handleResumeChange}
-                aria-describedby="resume-help"
+                aria-describedby={resumeHelpId}
               />
-              <small id="resume-help">
-                PDF or DOCX, up to 5 MB. This file is only selected in this
-                session; it is not uploaded or read.
+              <small id={resumeHelpId}>
+                This keeps file metadata only; the app does not upload or read the
+                file automatically.
               </small>
 
               {resumeFile && (
                 <div className="prep-resume-status">
                   <p role="status">
-                    Selected, not processed: <strong>{resumeFile.name}</strong>
+                    Selected: <strong>{resumeFile.name}</strong>
                   </p>
                   <button
                     className="secondary-button"
                     type="button"
                     onClick={() => {
                       setResumeFile(null);
+                      setResumeRemoved(true);
                       setResumeError("");
+                      if (resumeInputRef.current) {
+                        resumeInputRef.current.value = "";
+                      }
                     }}
                   >
                     Remove file
@@ -178,15 +244,21 @@ function InterviewSetupForm() {
                 </div>
               )}
 
+              {!resumeFile && setup?.resumeFileName && !resumeRemoved && (
+                <p className="prep-summary-note">
+                  Previously selected: <strong>{setup.resumeFileName}</strong>.
+                  Files are temporary; select it again to use it in this
+                  session.
+                </p>
+              )}
+
               {resumeError && <p role="alert">{resumeError}</p>}
             </div>
 
             <div className="prep-context-field">
-              <label htmlFor="jobDescriptionUrl">
-                Job description link (optional)
-              </label>
+              <label htmlFor={urlInputId}>Job description link</label>
               <input
-                id="jobDescriptionUrl"
+                id={urlInputId}
                 type="url"
                 placeholder="https://company.com/careers/job"
                 value={jobDescriptionUrl}
@@ -195,11 +267,9 @@ function InterviewSetupForm() {
             </div>
 
             <div className="prep-context-field">
-              <label htmlFor="jobDescription">
-                Job description (optional)
-              </label>
+              <label htmlFor={descriptionInputId}>Job description</label>
               <textarea
-                id="jobDescription"
+                id={descriptionInputId}
                 rows={6}
                 placeholder="Paste the job description here"
                 value={jobDescription}
@@ -208,13 +278,24 @@ function InterviewSetupForm() {
             </div>
 
             <div className="prep-context-field">
-              <label htmlFor="instructions">
-                What would you like to focus on? (optional)
+              <label htmlFor={resumeTextInputId}>Paste resume context (optional)</label>
+              <textarea
+                id={resumeTextInputId}
+                rows={5}
+                placeholder="Paste a brief summary of your experience, strengths, or project wins for this role"
+                value={resumeText}
+                onChange={(event) => setResumeText(event.target.value)}
+              />
+            </div>
+
+            <div className="prep-context-field">
+              <label htmlFor={instructionsInputId}>
+                Anything in particular to focus on
               </label>
               <textarea
-                id="instructions"
+                id={instructionsInputId}
                 rows={3}
-                placeholder="For example: practice a project walkthrough and Java coding"
+                placeholder="Ex: Ask questions about my projects based on my resume"
                 value={instructions}
                 onChange={(event) => setInstructions(event.target.value)}
               />
@@ -223,48 +304,22 @@ function InterviewSetupForm() {
         </details>
 
         <div className="prep-submit-row">
-          <button type="submit" disabled={!company.trim() || !role.trim()}>
-            Save interview setup
+          <button
+            type="submit"
+            disabled={isSaving || !company.trim() || !role.trim()}
+          >
+            {isSaving ? "Saving…" : setup ? "Save changes" : "Save setup"}
           </button>
-          <small>Saved as a preview in this session; no AI service is connected.</small>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={onCancel}
+            disabled={isSaving}
+          >
+            Cancel
+          </button>
         </div>
       </form>
-
-      {submittedSetup && (
-        <section className="prep-summary" aria-label="Saved interview setup">
-          <span className="section-kicker">SETUP SAVED</span>
-          <h2>
-            {submittedSetup.company} <span aria-hidden="true">/</span>{" "}
-            {submittedSetup.role}
-          </h2>
-          <p className="prep-summary-type">{submittedSetup.interviewType}</p>
-          {submittedSetup.jobDescriptionUrl && (
-            <p>
-              <a
-                href={submittedSetup.jobDescriptionUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Open job posting
-              </a>
-            </p>
-          )}
-          {submittedSetup.jobDescription && (
-            <details>
-              <summary>View job description</summary>
-              <p className="multiline">
-                {submittedSetup.jobDescription}
-              </p>
-            </details>
-          )}
-          {submittedSetup.instructions && (
-            <div className="prep-summary-instructions">
-              <h3>Your focus</h3>
-              <p className="multiline">{submittedSetup.instructions}</p>
-            </div>
-          )}
-        </section>
-      )}
     </main>
   );
 }

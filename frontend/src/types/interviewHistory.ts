@@ -1,7 +1,8 @@
+// History models: persisted API records shared by the history UI, hook, and import adapter.
 export type InterviewQuestion = {
   id: string;
   question: string;
-  originalAnswer: string;
+  originalAnswer?: string;
 };
 
 export type InterviewRound = {
@@ -19,6 +20,7 @@ export type InterviewRecord = {
   rounds: InterviewRound[];
 };
 
+// Legacy localStorage parsing remains isolated for the explicit import flow.
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

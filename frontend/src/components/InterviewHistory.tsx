@@ -1,9 +1,6 @@
+// History workspace: renders nested interview CRUD and keeps deep-link selection synchronized.
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import {
-  loadInterviewHistory,
-  saveInterviewHistory,
-} from "../services/interviewHistoryStorage";
 import type {
   InterviewQuestion,
   InterviewRecord,
@@ -11,28 +8,55 @@ import type {
 } from "../types/interviewHistory";
 import QuestionCard from "./QuestionCard";
 import ResumeFileField from "./ResumeFileField";
-import { navigateHistory, readHistoryRoute } from "../services/historyNavigation";
+import {
+  navigateHistory,
+  navigateNewInterview,
+  readHistoryRoute,
+} from "../services/historyNavigation";
+import { useInterviewHistory } from "../hooks/useInterviewHistory";
+
+type InterviewEditorDraft = {
+  interviewId: string;
+  company: string;
+  role: string;
+  resumeText: string;
+};
 
 function InterviewHistory() {
-  const [initialHistory] = useState(loadInterviewHistory);
-  const [interviews, setInterviews] = useState(initialHistory.records);
+  // The initial hash route seeds selection while server-backed records load.
   const [initialRoute] = useState(readHistoryRoute);
-  const initialInterview = initialHistory.records.find(
-    (interview) => interview.id === initialRoute.interviewId,
-  );
-  const [storageReady, setStorageReady] = useState(
-    initialHistory.status === "ready",
-  );
-  const [storageError, setStorageError] = useState(
-    initialHistory.status === "ready" ? "" : initialHistory.error,
-  );
+  const {
+    records: interviews,
+    isLoading,
+    hasLoaded,
+    isSaving,
+    isDeleting,
+    errorMessage,
+    legacyImportAvailable,
+    legacyImportError,
+    retryLoad,
+    createRecord,
+    updateRecord,
+    removeRecord,
+    createInterviewRound,
+    updateInterviewRound,
+    removeInterviewRound,
+    createRoundQuestions,
+    updateRoundQuestion,
+    removeRoundQuestion,
+    importLegacyHistory,
+  } = useInterviewHistory();
   const [selectedInterviewId, setSelectedInterviewId] = useState<string | null>(
-    initialInterview?.id ?? null,
+    initialRoute.interviewId,
   );
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
-  const [editCompany, setEditCompany] = useState(initialInterview?.company ?? "");
-  const [editRole, setEditRole] = useState(initialInterview?.role ?? "");
+  const [resumeText, setResumeText] = useState("");
+  const [isAddingInterview, setIsAddingInterview] = useState(
+    initialRoute.view === "new",
+  );
+  const [interviewDraft, setInterviewDraft] =
+    useState<InterviewEditorDraft | null>(null);
   const [selectedResumeFiles, setSelectedResumeFiles] = useState<
     Record<string, File>
   >({});
@@ -40,12 +64,8 @@ function InterviewHistory() {
   const [roundName, setRoundName] = useState("");
   const [roundDate, setRoundDate] = useState("");
   const [editingRoundId, setEditingRoundId] = useState<string | null>(null);
-  const [selectedRoundId, setSelectedRoundId] = useState<string | null>(() =>
-    initialInterview?.rounds.some(
-      (round) => round.id === initialRoute.roundId,
-    )
-      ? initialRoute.roundId
-      : null,
+  const [selectedRoundId, setSelectedRoundId] = useState<string | null>(
+    initialRoute.roundId,
   );
 
   const [questionText, setQuestionText] = useState("");
@@ -53,6 +73,7 @@ function InterviewHistory() {
     null,
   );
   const [editQuestionText, setEditQuestionText] = useState("");
+  const [editOriginalAnswer, setEditOriginalAnswer] = useState("");
 
   const selectedInterview = interviews.find(
     (interview) => interview.id === selectedInterviewId,
@@ -60,45 +81,68 @@ function InterviewHistory() {
   const selectedRound = selectedInterview?.rounds.find(
     (round) => round.id === selectedRoundId,
   );
+  const currentInterviewDraft =
+    selectedInterview &&
+    interviewDraft?.interviewId === selectedInterview.id
+      ? interviewDraft
+      : null;
+  const editCompany =
+    currentInterviewDraft
+      ? currentInterviewDraft.company
+      : selectedInterview?.company ?? "";
+  const editRole =
+    currentInterviewDraft
+      ? currentInterviewDraft.role
+      : selectedInterview?.role ?? "";
+  const editResumeText =
+    currentInterviewDraft
+      ? currentInterviewDraft.resumeText
+      : selectedInterview?.resumeText ?? "";
 
+  // Keep the edit draft keyed to its server record, falling back to loaded values on direct links.
+  function updateInterviewDraft(
+    field: "company" | "role" | "resumeText",
+    value: string,
+  ) {
+    if (!selectedInterview) return;
+    setInterviewDraft((current) => {
+      const base =
+        current?.interviewId === selectedInterview.id
+          ? current
+          : {
+              interviewId: selectedInterview.id,
+              company: selectedInterview.company,
+              role: selectedInterview.role,
+              resumeText: selectedInterview.resumeText,
+            };
+      return { ...base, [field]: value };
+    });
+  }
+
+  // Route syncing waits for server data before deciding whether a direct-linked ID is missing.
   useEffect(() => {
     function syncHistoryRoute() {
       const route = readHistoryRoute();
-      const interview = interviews.find(
-        (item) => item.id === route.interviewId,
-      );
-      const round = interview?.rounds.find(
-        (item) => item.id === route.roundId,
-      );
-
-      setSelectedInterviewId(interview?.id ?? null);
-      setSelectedRoundId(round?.id ?? null);
-      setEditCompany(interview?.company ?? "");
-      setEditRole(interview?.role ?? "");
+      setIsAddingInterview(route.view === "new");
+      setSelectedInterviewId(route.interviewId);
+      setSelectedRoundId(route.roundId);
       setRoundName("");
       setRoundDate("");
       setEditingRoundId(null);
       setQuestionText("");
       setEditingQuestionId(null);
       setEditQuestionText("");
+      setEditOriginalAnswer("");
     }
 
     window.addEventListener("popstate", syncHistoryRoute);
     return () => window.removeEventListener("popstate", syncHistoryRoute);
-  }, [interviews]);
+  }, []);
 
   function formatRoundDate(date: string) {
     if (!date) return "";
     const [year, month, day] = date.split("-");
     return `${day}/${month}/${year.slice(-2)}`;
-  }
-
-  function commitInterviews(next: InterviewRecord[]) {
-    setInterviews(next);
-    if (!storageReady) return;
-
-    const result = saveInterviewHistory(next);
-    setStorageError(result.status === "failed" ? result.error : "");
   }
 
   function resetRoundAndQuestionDrafts() {
@@ -113,13 +157,13 @@ function InterviewHistory() {
     setQuestionText("");
     setEditingQuestionId(null);
     setEditQuestionText("");
+    setEditOriginalAnswer("");
   }
 
   function resetRecordDrafts() {
     setCompany("");
     setRole("");
-    setEditCompany("");
-    setEditRole("");
+    setInterviewDraft(null);
   }
 
   function backToRecords() {
@@ -130,45 +174,73 @@ function InterviewHistory() {
     if (selectedInterviewId) navigateHistory(selectedInterviewId);
   }
 
-  function handleSaveInterview(event: FormEvent<HTMLFormElement>) {
+  // Create and navigate only after the API returns the server-generated record ID.
+  async function handleSaveInterview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const cleanedCompany = company.trim();
     const cleanedRole = role.trim();
     if (!cleanedCompany || !cleanedRole) return;
 
-    const record: InterviewRecord = {
-      id: crypto.randomUUID(),
+    const result = await createRecord({
       company: cleanedCompany,
       role: cleanedRole,
-      resumeText: "",
-      rounds: [],
-    };
-    commitInterviews([record, ...interviews]);
-    resetRecordDrafts();
+      resumeText: resumeText.trim(),
+    });
+    if (result.status !== "success") return;
+
+    const record = result.value;
+    setCompany("");
+    setRole("");
+    setResumeText("");
+    setIsAddingInterview(false);
+    resetRoundAndQuestionDrafts();
+    navigateHistory(record.id);
+    setSelectedInterviewId(record.id);
+    setInterviewDraft({
+      interviewId: record.id,
+      company: record.company,
+      role: record.role,
+      resumeText: record.resumeText,
+    });
+  }
+
+  function cancelAddingInterview() {
+    setCompany("");
+    setRole("");
+    setResumeText("");
+    setIsAddingInterview(false);
+    navigateHistory();
   }
 
   function startEditingInterview(interview: InterviewRecord) {
+    setIsAddingInterview(false);
+    setCompany("");
+    setRole("");
     navigateHistory(interview.id);
     setSelectedInterviewId(interview.id);
-    setEditCompany(interview.company);
-    setEditRole(interview.role);
+    setInterviewDraft({
+      interviewId: interview.id,
+      company: interview.company,
+      role: interview.role,
+      resumeText: interview.resumeText,
+    });
     resetRoundAndQuestionDrafts();
   }
 
-  function handleSaveInterviewDetails(event: FormEvent<HTMLFormElement>) {
+  async function handleSaveInterviewDetails(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const cleanedCompany = editCompany.trim();
     const cleanedRole = editRole.trim();
     if (!selectedInterviewId || !cleanedCompany || !cleanedRole) return;
 
-    updateSelectedInterview((interview) => ({
-      ...interview,
+    await updateRecord(selectedInterviewId, {
       company: cleanedCompany,
       role: cleanedRole,
-    }));
+      resumeText: editResumeText.trim(),
+    });
   }
 
-  function handleDeleteInterview(interview: InterviewRecord) {
+  async function handleDeleteInterview(interview: InterviewRecord) {
     if (
       !window.confirm(
         `Delete ${interview.company} — ${interview.role} and all of its rounds and questions?`,
@@ -177,9 +249,9 @@ function InterviewHistory() {
       return;
     }
 
-    commitInterviews(
-      interviews.filter((record) => record.id !== interview.id),
-    );
+    const result = await removeRecord(interview.id);
+    if (result.status !== "success") return;
+
     setSelectedResumeFiles((previous) => {
       const next = { ...previous };
       delete next[interview.id];
@@ -190,17 +262,6 @@ function InterviewHistory() {
       resetRecordDrafts();
       resetRoundAndQuestionDrafts();
     }
-  }
-
-  function updateSelectedInterview(
-    update: (interview: InterviewRecord) => InterviewRecord,
-  ) {
-    if (!selectedInterviewId) return;
-    commitInterviews(
-      interviews.map((interview) =>
-        interview.id === selectedInterviewId ? update(interview) : interview,
-      ),
-    );
   }
 
   function handleResumeFileSelected(file: File) {
@@ -220,34 +281,27 @@ function InterviewHistory() {
     });
   }
 
-  function handleSaveRound(event: FormEvent<HTMLFormElement>) {
+  // Save round edits and creations through the selected interview's nested endpoint.
+  async function handleSaveRound(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const cleanedName = roundName.trim();
     if (!selectedInterviewId || !cleanedName) return;
 
     if (editingRoundId) {
-      const roundId = editingRoundId;
-      updateSelectedInterview((interview) => ({
-        ...interview,
-        rounds: interview.rounds.map((round) =>
-          round.id === roundId
-            ? { ...round, name: cleanedName, date: roundDate }
-            : round,
-        ),
-      }));
+      const result = await updateInterviewRound(
+        selectedInterviewId,
+        editingRoundId,
+        { name: cleanedName, date: roundDate },
+      );
+      if (result.status !== "success") return;
     } else {
-      const round: InterviewRound = {
-        id: crypto.randomUUID(),
+      const result = await createInterviewRound(selectedInterviewId, {
         name: cleanedName,
         date: roundDate,
-        questions: [],
-      };
-      updateSelectedInterview((interview) => ({
-        ...interview,
-        rounds: [...interview.rounds, round],
-      }));
-      navigateHistory(selectedInterviewId, round.id);
-      setSelectedRoundId(round.id);
+      });
+      if (result.status !== "success") return;
+      navigateHistory(selectedInterviewId, result.value.id);
+      setSelectedRoundId(result.value.id);
       resetQuestionDrafts();
     }
     setRoundName("");
@@ -264,7 +318,7 @@ function InterviewHistory() {
     resetQuestionDrafts();
   }
 
-  function handleDeleteRound(round: InterviewRound) {
+  async function handleDeleteRound(round: InterviewRound) {
     if (
       !window.confirm(
         `Delete the "${round.name}" round and its ${round.questions.length} recorded question(s)?`,
@@ -273,10 +327,9 @@ function InterviewHistory() {
       return;
     }
 
-    updateSelectedInterview((interview) => ({
-      ...interview,
-      rounds: interview.rounds.filter((item) => item.id !== round.id),
-    }));
+    if (!selectedInterviewId) return;
+    const result = await removeInterviewRound(selectedInterviewId, round.id);
+    if (result.status !== "success") return;
     if (selectedRoundId === round.id) {
       if (selectedInterviewId) navigateHistory(selectedInterviewId);
       setSelectedRoundId(null);
@@ -287,7 +340,8 @@ function InterviewHistory() {
     }
   }
 
-  function handleSaveQuestion(event: FormEvent<HTMLFormElement>) {
+  // Batch creation keeps the one-question-per-line UX atomic and avoids retry duplicates.
+  async function handleSaveQuestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const questions = [
       ...new Set(
@@ -299,28 +353,23 @@ function InterviewHistory() {
     ];
     if (!selectedRoundId || questions.length === 0) return;
 
-    const newQuestions: InterviewQuestion[] = questions.map((question) => ({
-      id: crypto.randomUUID(),
-      question,
-      originalAnswer: "",
-    }));
-    updateSelectedInterview((interview) => ({
-      ...interview,
-      rounds: interview.rounds.map((round) =>
-        round.id === selectedRoundId
-          ? { ...round, questions: [...round.questions, ...newQuestions] }
-          : round,
-      ),
-    }));
+    if (!selectedInterviewId) return;
+    const result = await createRoundQuestions(
+      selectedInterviewId,
+      selectedRoundId,
+      questions.map((question) => ({ question, originalAnswer: "" })),
+    );
+    if (result.status !== "success") return;
     setQuestionText("");
   }
 
   function startEditingQuestion(question: InterviewQuestion) {
     setEditingQuestionId(question.id);
     setEditQuestionText(question.question);
+    setEditOriginalAnswer(question.originalAnswer ?? "");
   }
 
-  function handleSaveQuestionEdit(
+  async function handleSaveQuestionEdit(
     event: FormEvent<HTMLFormElement>,
     roundId: string,
     questionId: string,
@@ -329,28 +378,21 @@ function InterviewHistory() {
     const cleanedQuestion = editQuestionText.trim();
     if (!cleanedQuestion) return;
 
-    updateSelectedInterview((interview) => ({
-      ...interview,
-      rounds: interview.rounds.map((round) =>
-        round.id === roundId
-          ? {
-              ...round,
-              questions: round.questions.map((question) =>
-                question.id === questionId
-                  ? {
-                      ...question,
-                      question: cleanedQuestion,
-                    }
-                  : question,
-              ),
-            }
-          : round,
-      ),
-    }));
+    if (!selectedInterviewId) return;
+    const result = await updateRoundQuestion(
+      selectedInterviewId,
+      roundId,
+      questionId,
+      {
+        question: cleanedQuestion,
+        originalAnswer: editOriginalAnswer.trim(),
+      },
+    );
+    if (result.status !== "success") return;
     resetQuestionDrafts();
   }
 
-  function handleDeleteQuestion(
+  async function handleDeleteQuestion(
     roundId: string,
     question: InterviewQuestion,
   ) {
@@ -358,146 +400,214 @@ function InterviewHistory() {
       return;
     }
 
-    updateSelectedInterview((interview) => ({
-      ...interview,
-      rounds: interview.rounds.map((round) =>
-        round.id === roundId
-          ? {
-              ...round,
-              questions: round.questions.filter(
-                (item) => item.id !== question.id,
-              ),
-            }
-          : round,
-      ),
-    }));
+    if (!selectedInterviewId) return;
+    const result = await removeRoundQuestion(
+      selectedInterviewId,
+      roundId,
+      question.id,
+    );
+    if (result.status !== "success") return;
     if (editingQuestionId === question.id) resetQuestionDrafts();
-  }
-
-  function replaceUnreadableHistory() {
-    if (
-      !window.confirm(
-        "Replace the unreadable saved interview history with the records currently shown? The unreadable saved data will be lost.",
-      )
-    ) {
-      return;
-    }
-
-    const result = saveInterviewHistory(interviews);
-    if (result.status === "saved") {
-      setStorageReady(true);
-      setStorageError("");
-    } else {
-      setStorageError(result.error);
-    }
   }
 
   return (
     <main className="history-page">
-      {storageError && (
+      {errorMessage && (
         <div className="storage-warning" role="alert">
-          <p>{storageError}</p>
-          {initialHistory.status === "malformed" && !storageReady && (
-            <button
-              className="danger-button"
-              type="button"
-              onClick={replaceUnreadableHistory}
-            >
-              Replace unreadable saved history
-            </button>
-          )}
+          <p>{errorMessage}</p>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => void retryLoad()}
+            disabled={isLoading}
+          >
+            Retry loading
+          </button>
         </div>
       )}
 
-      {!selectedInterview ? (
-        <div className="history-list-view">
-          <header className="history-heading">
-            <h1>My Interview History</h1>
-          </header>
-
-          <section
-            className="history-form-card"
-            aria-labelledby="record-form-title"
+      {legacyImportAvailable && !isLoading && (
+        <div className="storage-note" role="status">
+          <p>Older interview history is available in this browser and has not been changed.</p>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => void importLegacyHistory()}
+            disabled={isSaving || isDeleting}
           >
-            <h2 id="record-form-title">Add an interview</h2>
-            <form onSubmit={handleSaveInterview}>
-              <div className="form-grid">
-                <div>
-                  <label htmlFor="history-company">Company</label>
-                  <input
-                    id="history-company"
-                    value={company}
-                    onChange={(event) => setCompany(event.target.value)}
-                    placeholder="For example, Ontic"
-                    required
-                  />
-                </div>
-                <div>
-                  <label htmlFor="history-role">Role</label>
-                  <input
-                    id="history-role"
-                    value={role}
-                    onChange={(event) => setRole(event.target.value)}
-                    placeholder="For example, Software Engineer"
-                    required
-                  />
-                </div>
-              </div>
-              <button
-                type="submit"
-                disabled={!company.trim() || !role.trim()}
-              >
-                Add interview
-              </button>
-            </form>
-          </section>
-
-          <section className="history-records" aria-labelledby="records-heading">
-            <div className="section-heading">
-              <h2 id="records-heading">Interview records</h2>
-              <span className="record-count">{interviews.length}</span>
-            </div>
-
-            {interviews.length === 0 ? (
-              <p className="empty-state">
-                No interviews yet. Add a company and role above.
-              </p>
-            ) : (
-              <div className="record-grid">
-                {interviews.map((interview) => (
-                  <article className="record-card" key={interview.id}>
-                    <div className="record-info">
-                      <span className="record-company">
-                        {interview.company}
-                      </span>
-                      <span className="record-role">{interview.role}</span>
-                      <span className="record-summary">
-                        {interview.rounds.length}{" "}
-                        {interview.rounds.length === 1 ? "round" : "rounds"}
-                      </span>
-                    </div>
-                    <div className="card-actions">
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={() => startEditingInterview(interview)}
-                      >
-                        View
-                      </button>
-                      <button
-                        className="danger-button"
-                        type="button"
-                        onClick={() => handleDeleteInterview(interview)}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
+            Import legacy history
+          </button>
         </div>
+      )}
+      {legacyImportError && !isLoading && (
+        <p className="storage-warning" role="alert">
+          Legacy history could not be read for import: {legacyImportError}
+        </p>
+      )}
+
+      {isLoading ? (
+        <section className="empty-state" role="status">
+          Loading interview history…
+        </section>
+      ) : !hasLoaded ? (
+        <section className="history-form-card" role="alert">
+          <h1>Interview history is unavailable</h1>
+          <p>The server data has not loaded, so no records can be selected yet.</p>
+          <button type="button" onClick={() => void retryLoad()}>
+            Retry loading
+          </button>
+        </section>
+      ) : !selectedInterview ? (
+        selectedInterviewId ? (
+          <section className="history-form-card" role="alert">
+            <h1>Interview not found</h1>
+            <p>This interview link is no longer available.</p>
+            <button type="button" onClick={backToRecords} disabled={isSaving || isDeleting}>
+              Return to interview list
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => void retryLoad()}
+            >
+              Retry
+            </button>
+          </section>
+        ) : isAddingInterview ? (
+          <div className="history-add-view">
+            <nav className="editor-navigation" aria-label="Interview history">
+              <button type="button" onClick={cancelAddingInterview} disabled={isSaving}>
+                ← All interviews
+              </button>
+            </nav>
+            <header className="history-heading">
+              <h1>New interview</h1>
+              <p>Add a company and role to start recording interview rounds.</p>
+            </header>
+            <section
+              className="history-form-card"
+              aria-labelledby="record-form-title"
+            >
+              <h2 id="record-form-title">Interview details</h2>
+              <form onSubmit={handleSaveInterview}>
+                <div className="form-grid">
+                  <div>
+                    <label htmlFor="history-company">Company</label>
+                    <input
+                      id="history-company"
+                      value={company}
+                      onChange={(event) => setCompany(event.target.value)}
+                      placeholder="For example, Ontic"
+                      required
+                      autoFocus
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="history-role">Role</label>
+                    <input
+                      id="history-role"
+                      value={role}
+                      onChange={(event) => setRole(event.target.value)}
+                      placeholder="For example, Software Engineer"
+                      required
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="history-resume-text">
+                    Resume context (optional)
+                  </label>
+                  <textarea
+                    id="history-resume-text"
+                    rows={5}
+                    value={resumeText}
+                    onChange={(event) => setResumeText(event.target.value)}
+                    placeholder="Paste experience or project context for this interview."
+                  />
+                </div>
+                <div className="form-actions">
+                  <button
+                    type="submit"
+                    disabled={isSaving || !company.trim() || !role.trim()}
+                  >
+                    {isSaving ? "Saving…" : "Create interview"}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={cancelAddingInterview}
+                    disabled={isSaving}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        ) : (
+          <div className="history-list-view">
+            <header className="history-heading">
+              <h1>My Interview History</h1>
+            </header>
+
+            <section className="history-records" aria-labelledby="records-heading">
+              <div className="section-heading">
+                <h2 id="records-heading">Interview records</h2>
+                <div className="history-record-actions">
+                  <span className="record-count">{interviews.length}</span>
+                  <button
+                    type="button"
+                    onClick={navigateNewInterview}
+                    disabled={isSaving || isDeleting}
+                  >
+                    + New interview
+                  </button>
+                </div>
+              </div>
+
+              {interviews.length === 0 ? (
+                <p className="empty-state">
+                  No interviews yet. Add your first interview to get started.
+                </p>
+              ) : (
+                <div className="record-grid">
+                  {interviews.map((interview) => (
+                    <article className="record-card" key={interview.id}>
+                      <div className="record-info">
+                        <span className="record-company">
+                          {interview.company}
+                        </span>
+                        <span className="record-role">{interview.role}</span>
+                        <span className="record-summary">
+                          {interview.rounds.length}{" "}
+                          {interview.rounds.length === 1 ? "round" : "rounds"}
+                        </span>
+                      </div>
+                      <div className="card-actions">
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => startEditingInterview(interview)}
+                          disabled={isSaving || isDeleting}
+                        >
+                          View
+                        </button>
+                        <button
+                          className="danger-button"
+                          type="button"
+                          onClick={() => handleDeleteInterview(interview)}
+                          disabled={isSaving || isDeleting}
+                        >
+                          {isDeleting ? "Deleting…" : "Delete"}
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+        )
       ) : (
         <div className="history-editor">
           <nav
@@ -505,7 +615,7 @@ function InterviewHistory() {
             aria-label="Interview history"
             hidden={selectedRound !== undefined}
           >
-            <button type="button" onClick={backToRecords}>
+            <button type="button" onClick={backToRecords} disabled={isSaving || isDeleting}>
               All interviews
             </button>
           </nav>
@@ -524,14 +634,26 @@ function InterviewHistory() {
               className="danger-button"
               type="button"
               onClick={() => handleDeleteInterview(selectedInterview)}
+              disabled={isSaving || isDeleting}
             >
-              Delete interview
+              {isDeleting ? "Deleting…" : "Delete interview"}
             </button>
           </header>
+
+          {selectedRoundId && !selectedRound && (
+            <section className="history-form-card" role="alert">
+              <h2>Round not found</h2>
+              <p>This round link is no longer available in this interview.</p>
+              <button type="button" onClick={backToRounds} disabled={isSaving || isDeleting}>
+                Return to rounds
+              </button>
+            </section>
+          )}
 
           <section
             className="selected-interview"
             aria-label={`${selectedInterview.company} interview details`}
+            hidden={Boolean(selectedRoundId && !selectedRound)}
           >
             <section
               className="rounds-section"
@@ -551,29 +673,30 @@ function InterviewHistory() {
                 </p>
               ) : (
                 <div className="round-grid">
-                  {[...selectedInterview.rounds]
-                    .sort((first, second) => {
-                      if (!first.date) return second.date ? 1 : 0;
-                      if (!second.date) return -1;
-                      return first.date.localeCompare(second.date);
-                    })
-                    .map((round) => {
+                  {selectedInterview.rounds.map((round) => {
                     return (
                       <article className="round-card" key={round.id}>
                         <div className="round-select">
                           <span className="round-name">{round.name}</span>
-                          {round.date && (
-                            <time className="round-date" dateTime={round.date}>
-                              {formatRoundDate(round.date)}
-                            </time>
-                          )}
-                          {round.questions.length > 0 && (
-                            <span className="record-summary">
-                              {round.questions.length}{" "}
-                              {round.questions.length === 1
-                                ? "question"
-                                : "questions"}
-                            </span>
+                          {(round.date || round.questions.length > 0) && (
+                            <div className="round-metadata">
+                              {round.date && (
+                                <time
+                                  className="round-date"
+                                  dateTime={round.date}
+                                >
+                                  {formatRoundDate(round.date)}
+                                </time>
+                              )}
+                              {round.questions.length > 0 && (
+                                <span className="record-summary">
+                                  {round.questions.length}{" "}
+                                  {round.questions.length === 1
+                                    ? "question"
+                                    : "questions"}
+                                </span>
+                              )}
+                            </div>
                           )}
                         </div>
                         {round.questions.length > 0 && (
@@ -586,6 +709,7 @@ function InterviewHistory() {
                         <div className="card-actions">
                           <button
                             type="button"
+                            disabled={isSaving || isDeleting}
                             onClick={() => {
                               navigateHistory(selectedInterview.id, round.id);
                               setSelectedRoundId(round.id);
@@ -601,8 +725,9 @@ function InterviewHistory() {
                             className="danger-button"
                             type="button"
                             onClick={() => handleDeleteRound(round)}
+                            disabled={isSaving || isDeleting}
                           >
-                            Delete
+                            {isDeleting ? "Deleting…" : "Delete"}
                           </button>
                         </div>
                       </article>
@@ -618,7 +743,7 @@ function InterviewHistory() {
               hidden={selectedRound !== undefined}
             >
               <details className="edit-record-details">
-                <summary>Edit company or role</summary>
+                <summary>Edit company, role, or resume context</summary>
                 <form
                   className="inline-form record-details-form"
                   onSubmit={handleSaveInterviewDetails}
@@ -629,7 +754,9 @@ function InterviewHistory() {
                       <input
                         id="edit-history-company"
                         value={editCompany}
-                        onChange={(event) => setEditCompany(event.target.value)}
+                        onChange={(event) =>
+                          updateInterviewDraft("company", event.target.value)
+                        }
                         required
                       />
                     </div>
@@ -638,16 +765,33 @@ function InterviewHistory() {
                       <input
                         id="edit-history-role"
                         value={editRole}
-                        onChange={(event) => setEditRole(event.target.value)}
+                        onChange={(event) =>
+                          updateInterviewDraft("role", event.target.value)
+                        }
                         required
                       />
                     </div>
                   </div>
+                  <div>
+                    <label htmlFor="edit-history-resume">
+                      Pasted resume context (optional)
+                    </label>
+                    <textarea
+                      id="edit-history-resume"
+                      rows={5}
+                      value={editResumeText}
+                      onChange={(event) =>
+                        updateInterviewDraft("resumeText", event.target.value)
+                      }
+                    />
+                  </div>
                   <button
                     type="submit"
-                    disabled={!editCompany.trim() || !editRole.trim()}
+                    disabled={
+                      isSaving || !editCompany.trim() || !editRole.trim()
+                    }
                   >
-                    Save changes
+                    {isSaving ? "Saving…" : "Save changes"}
                   </button>
                 </form>
               </details>
@@ -683,13 +827,21 @@ function InterviewHistory() {
                     </div>
                   </div>
                   <div className="card-actions">
-                    <button type="submit" disabled={!roundName.trim()}>
-                      {editingRoundId ? "Save round" : "Add round"}
+                    <button
+                      type="submit"
+                      disabled={isSaving || !roundName.trim()}
+                    >
+                      {isSaving
+                        ? "Saving…"
+                        : editingRoundId
+                          ? "Save round"
+                          : "Add round"}
                     </button>
                     {editingRoundId && (
                       <button
                         className="secondary-button"
                         type="button"
+                        disabled={isSaving}
                         onClick={() => {
                           setRoundName("");
                           setRoundDate("");
@@ -710,7 +862,11 @@ function InterviewHistory() {
                 aria-labelledby="questions-heading"
               >
                 <nav className="editor-tabs" aria-label="Interview sections">
-                  <button type="button" onClick={backToRounds}>
+                  <button
+                    type="button"
+                    onClick={backToRounds}
+                    disabled={isSaving || isDeleting}
+                  >
                     Rounds
                   </button>
                   <span aria-current="page">{selectedRound.name}</span>
@@ -746,12 +902,16 @@ function InterviewHistory() {
                       </div>
                     </div>
                     <div className="card-actions">
-                      <button type="submit" disabled={!roundName.trim()}>
-                        Save round
+                      <button
+                        type="submit"
+                        disabled={isSaving || !roundName.trim()}
+                      >
+                        {isSaving ? "Saving…" : "Save round"}
                       </button>
                       <button
                         className="secondary-button"
                         type="button"
+                        disabled={isSaving}
                         onClick={() => {
                           setEditingRoundId(null);
                           setRoundName("");
@@ -768,6 +928,7 @@ function InterviewHistory() {
                     className="secondary-button"
                     type="button"
                     onClick={() => startEditingRound(selectedRound)}
+                    disabled={isSaving || isDeleting}
                   >
                     Edit round details
                   </button>
@@ -793,10 +954,19 @@ function InterviewHistory() {
                       Each non-empty line will be saved as a separate question.
                     </small>
                   </div>
-                  <button type="submit" disabled={!questionText.trim()}>
-                    Add questions
+                  <button
+                    type="submit"
+                    disabled={isSaving || !questionText.trim()}
+                  >
+                    {isSaving ? "Saving…" : "Add questions"}
                   </button>
                 </form>
+
+                {selectedRound.questions.length === 0 && (
+                  <p className="empty-state">
+                    No questions recorded for this round yet.
+                  </p>
+                )}
 
                 {selectedRound.questions.length > 0 && (
                   <div className="question-list">
@@ -809,6 +979,7 @@ function InterviewHistory() {
                         role={selectedInterview.role}
                         round={selectedRound.name}
                         resumeText={selectedInterview.resumeText}
+                        isBusy={isSaving || isDeleting}
                         onEdit={() => startEditingQuestion(question)}
                         onDelete={() =>
                           handleDeleteQuestion(selectedRound.id, question)
@@ -839,17 +1010,31 @@ function InterviewHistory() {
                                 required
                               />
                             </div>
+                            <div>
+                              <label htmlFor={`${question.id}-edit-answer`}>
+                                Original answer (optional)
+                              </label>
+                              <textarea
+                                id={`${question.id}-edit-answer`}
+                                rows={4}
+                                value={editOriginalAnswer}
+                                onChange={(event) =>
+                                  setEditOriginalAnswer(event.target.value)
+                                }
+                              />
+                            </div>
                             <div className="card-actions">
                               <button
                                 type="submit"
-                                disabled={!editQuestionText.trim()}
+                                disabled={isSaving || !editQuestionText.trim()}
                               >
-                                Save question
+                                {isSaving ? "Saving…" : "Save question"}
                               </button>
                               <button
                                 className="secondary-button"
                                 type="button"
                                 onClick={resetQuestionDrafts}
+                                disabled={isSaving}
                               >
                                 Cancel
                               </button>

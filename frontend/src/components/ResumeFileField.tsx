@@ -1,3 +1,4 @@
+// Shared resume picker: validates a local PDF/DOCX file selection for prep or history views.
 import { useState } from "react";
 import type { ChangeEvent } from "react";
 
