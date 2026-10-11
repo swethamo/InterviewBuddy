@@ -2,7 +2,7 @@
 
 A full-stack interview preparation app built with **React and Spring Boot**. Save preparation setups, organize past interview questions, and keep track of interview rounds in one place.
 
-The app uses a file-based **H2 database** for local persistence. Answer guidance currently uses a clearly labeled demo provider; real AI integration is planned.
+The app uses a file-based **H2 database** for local persistence.
 
 <img width="426" alt="Interview Buddy home page" src="https://github.com/user-attachments/assets/dac412fa-6d18-4ae1-9e18-a9234009797a" />
 
@@ -28,15 +28,11 @@ Organize past interviews by company and role. Record interview rounds, questions
 
 Select a resume with shared file validation and add context to your preparation setup.
 
-Resume files are selected temporarily in the browser. They are **not uploaded, parsed, or processed**.
-
 <img width="406" alt="Resume selection and optional context fields" src="https://github.com/user-attachments/assets/ca2670a8-cbb6-4eb4-9e90-95244ac14ff4" />
 
 ### Demo answer guidance
 
 Explore sample recommended answers and suggested keywords through the answer guidance interface.
-
-These suggestions come from a **demo provider**, not a connected AI model.
 
 <img width="425" alt="Demo recommended answer and suggested keywords" src="https://github.com/user-attachments/assets/55e96940-b4c5-4dd2-ad48-befee4a5d1ed" />
 
@@ -113,15 +109,6 @@ From `backend/`:
 
 Backend tests use an isolated, in-memory H2 database.
 
-## Current limitations
-
-- No real AI answer generation or company research is connected.
-- Job description URLs are not fetched automatically.
-- Resume files are not uploaded or parsed.
-- The mock interview screen does not yet have a session engine.
-- Code execution is not supported.
-- Authentication and account sync are not implemented. Saved data remains in the local backend database.
-
 ## Planned improvements
 
 - Connect a real AI provider for answer guidance and keyword suggestions.
@@ -129,15 +116,3 @@ Backend tests use an isolated, in-memory H2 database.
 - Add resume parsing, job description fetching, and company research.
 - Introduce authentication and account-based data sync.
 - Add code execution support for coding practice.
-
-## Integration points
-
-The service layer provides entry points for extending the app while preserving the existing interview history CRUD.
-
-| File | Responsibility |
-| --- | --- |
-| `frontend/src/services/answerGuidance.ts` | Demo answer provider; entry point for a real model client and structured answer-generation contract |
-| `frontend/src/services/prepSetupApi.ts` | API transport for saved preparation setups |
-| `frontend/src/services/interviewHistoryApi.ts` | API transport for interview history |
-| `frontend/src/services/historyNavigation.ts` | Keeps history URLs and in-app navigation state aligned |
-| `frontend/src/services/interviewTypes.ts` | Shared interview-type values used across workflows |
