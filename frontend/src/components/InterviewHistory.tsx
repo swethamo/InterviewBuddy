@@ -978,7 +978,6 @@ function InterviewHistory() {
                         company={selectedInterview.company}
                         role={selectedInterview.role}
                         round={selectedRound.name}
-                        resumeText={selectedInterview.resumeText}
                         isBusy={isSaving || isDeleting}
                         onEdit={() => startEditingQuestion(question)}
                         onDelete={() =>

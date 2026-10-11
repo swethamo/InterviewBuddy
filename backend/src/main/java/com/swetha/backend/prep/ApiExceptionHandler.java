@@ -14,6 +14,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
+import com.swetha.backend.answer.AnswerGenerationException;
 
 // Keeps validation, lookup, and database failures consistent across API endpoints.
 @RestControllerAdvice
@@ -60,6 +61,15 @@ public class ApiExceptionHandler {
 
         return ResponseEntity.status(status)
             .body(new ApiError(code, status.toString(), message));
+    }
+
+    @ExceptionHandler(AnswerGenerationException.class)
+    public ResponseEntity<ApiError> handleAnswerGeneration(
+        AnswerGenerationException exception
+    ) {
+        int status = exception.status().value();
+        return ResponseEntity.status(exception.status())
+            .body(new ApiError(status, exception.status().toString(), exception.getMessage()));
     }
 
     @ExceptionHandler(ConstraintViolationException.class)

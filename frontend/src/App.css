@@ -847,6 +847,11 @@ padding: var(--space-6);
   color: var(--text);
 }
 
+.answer-guidance h5 {
+  margin: 0;
+  color: var(--text);
+}
+
 .answer-guidance ul,
 .answer-guidance ol {
   padding-left: 1.3rem;

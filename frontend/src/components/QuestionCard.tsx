@@ -1,14 +1,12 @@
-// Question card: renders a recorded question and the local guidance workflow for sample answers.
+// Question card: displays a recorded question and its on-demand AI guidance.
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type {
-  AnswerSuggestion,
   AnswerGuidanceProvider,
+  AnswerGuidanceRequest,
+  AnswerSuggestion,
 } from "../services/answerGuidance";
-import {
-  requestAnswerGuidance,
-  sampleAnswerGuidanceProvider,
-} from "../services/answerGuidance";
+import { requestAnswerGuidance } from "../services/answerGuidance";
 import type { InterviewQuestion } from "../types/interviewHistory";
 
 type QuestionCardProps = {
@@ -17,7 +15,6 @@ type QuestionCardProps = {
   company: string;
   role: string;
   round: string;
-  resumeText: string;
   onEdit: () => void;
   onDelete: () => void;
   isBusy?: boolean;
@@ -27,8 +24,8 @@ type QuestionCardProps = {
 
 type SuggestionState =
   | { status: "idle" }
-  | { status: "loading" }
-  | { status: "error"; message: string }
+  | { status: "loading"; contextKey: string }
+  | { status: "error"; message: string; contextKey: string }
   | {
       status: "success";
       suggestion: AnswerSuggestion;
@@ -60,56 +57,69 @@ function QuestionCard({
   company,
   role,
   round,
-  resumeText,
   onEdit,
   onDelete,
   isBusy = false,
   children,
-  guidanceProvider = sampleAnswerGuidanceProvider,
+  guidanceProvider = requestAnswerGuidance,
 }: QuestionCardProps) {
   const [isSuggestionOpen, setIsSuggestionOpen] = useState(false);
   const [suggestionState, setSuggestionState] = useState<SuggestionState>({
     status: "idle",
   });
   const requestIdRef = useRef(0);
+  const activeContextRef = useRef<string | null>(null);
   const panelId = `answer-suggestion-${item.id}`;
-  const request = {
+  const request: AnswerGuidanceRequest = {
     company,
     role,
     round,
     question: item.question,
-    answerStyle: "very-short" as const,
-    ...(resumeText.trim() ? { resumeText } : {}),
+    ...(item.originalAnswer?.trim()
+      ? { originalAnswer: item.originalAnswer }
+      : {}),
   };
   const contextKey = JSON.stringify(request);
   const currentSuggestion =
     suggestionState.status === "success" && suggestionState.contextKey === contextKey
       ? suggestionState.suggestion
       : null;
+  const isCurrentRequestLoading =
+    suggestionState.status === "loading" &&
+    suggestionState.contextKey === contextKey;
+  const currentError =
+    suggestionState.status === "error" && suggestionState.contextKey === contextKey
+      ? suggestionState.message
+      : null;
+  const isCurrentSuggestionVisible = currentSuggestion !== null;
 
   useEffect(() => {
     return () => {
       requestIdRef.current += 1;
+      activeContextRef.current = null;
     };
   }, []);
 
-  // Request handling avoids duplicate work and ensures older responses cannot overwrite newer context.
   async function generateAnswer() {
-    if (suggestionState.status === "loading") return;
+    if (activeContextRef.current === contextKey) return;
 
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
+    activeContextRef.current = contextKey;
     setIsSuggestionOpen(true);
-    setSuggestionState({ status: "loading" });
+    setSuggestionState({ status: "loading", contextKey });
 
     try {
       const suggestion = await guidanceProvider(request);
       if (requestId !== requestIdRef.current) return;
+      activeContextRef.current = null;
       setSuggestionState({ status: "success", suggestion, contextKey });
     } catch (error) {
       if (requestId !== requestIdRef.current) return;
+      activeContextRef.current = null;
       setSuggestionState({
         status: "error",
+        contextKey,
         message:
           error instanceof Error
             ? error.message
@@ -117,9 +127,6 @@ function QuestionCard({
       });
     }
   }
-
-  const isCurrentSuggestionVisible =
-    suggestionState.status === "success" && suggestionState.contextKey === contextKey;
 
   return (
     <article className="question-card">
@@ -152,6 +159,7 @@ function QuestionCard({
             type="button"
             aria-expanded={isSuggestionOpen}
             aria-controls={panelId}
+            disabled={isCurrentRequestLoading}
             onClick={() => {
               if (isSuggestionOpen && isCurrentSuggestionVisible) {
                 setIsSuggestionOpen(false);
@@ -170,26 +178,24 @@ function QuestionCard({
               ? "Hide suggestion"
               : isCurrentSuggestionVisible
                 ? "Open suggestion"
-                : suggestionState.status === "loading"
+                : isCurrentRequestLoading
                   ? "Generating…"
-                  : guidanceProvider === requestAnswerGuidance
-                    ? "Generate AI answer"
-                    : "Generate sample answer"}
+                  : "Generate Answer"}
           </button>
 
           <section
             id={panelId}
             className="answer-guidance"
-            aria-label={`${guidanceProvider === requestAnswerGuidance ? "AI" : "Sample"} answer suggestion for question ${index + 1}`}
+            aria-label={`AI answer guidance for question ${index + 1}`}
             aria-live="polite"
             hidden={!isSuggestionOpen}
           >
-            {suggestionState.status === "loading" && (
-              <p role="status">Generating a short answer suggestion…</p>
+            {isCurrentRequestLoading && (
+              <p role="status">Generating an answer suggestion…</p>
             )}
-            {suggestionState.status === "error" && (
+            {currentError && (
               <div role="status">
-                <p>{suggestionState.message}</p>
+                <p>{currentError}</p>
                 <button
                   className="secondary-button"
                   type="button"
@@ -201,17 +207,28 @@ function QuestionCard({
             )}
             {isCurrentSuggestionVisible && currentSuggestion && (
               <>
-                <h4>{guidanceProvider === requestAnswerGuidance ? "Short answer suggestion" : "Sample answer suggestion"}</h4>
+                <h4>AI-generated suggestion</h4>
+                <p>Review and personalize this suggestion before using it.</p>
                 <p className="suggested-answer">
                   {renderHighlightedAnswer(
                     currentSuggestion.suggestedAnswer,
                     currentSuggestion.emphasizedKeywords,
                   )}
                 </p>
-                {currentSuggestion.missingContext.length > 0 && (
+                {currentSuggestion.emphasizedKeywords.length > 0 && (
+                  <div>
+                    <h5>Relevant keywords</h5>
+                    <ul aria-label="Relevant keywords">
+                      {currentSuggestion.emphasizedKeywords.map((keyword, keywordIndex) => (
+                        <li key={`${keywordIndex}-${keyword}`}>{keyword}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {currentSuggestion.strengtheningExplanation && (
                   <p>
-                    To make this specific to you, add: {" "}
-                    {currentSuggestion.missingContext.join(", ")}.
+                    <strong>How to strengthen your original answer:</strong>{" "}
+                    {currentSuggestion.strengtheningExplanation}
                   </p>
                 )}
                 <div className="card-actions">
