@@ -40,11 +40,17 @@ file-based H2 database for local persistence.
 
 From `frontend/`:
 
-- `npm install`
-- `npm run dev` – start the Vite dev server
-- `npm run build` – type-check and bundle the production build
-- `npm run lint` – run ESLint
-- `npm test` – run focused frontend hook tests
+```powershell
+npm run build
+npm run lint
+npm test
+```
+
+| Command | Purpose |
+| --- | --- |
+| `npm run build` | Type-check and create the production bundle |
+| `npm run lint` | Run ESLint |
+| `npm test` | Run focused frontend hook tests |
 
 From `backend/`:
 
