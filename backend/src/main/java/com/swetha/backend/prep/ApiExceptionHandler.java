@@ -4,6 +4,7 @@ import jakarta.validation.ConstraintViolationException;
 import java.util.Objects;
 import java.util.Comparator;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
 import com.swetha.backend.answer.AnswerGenerationException;
+import com.swetha.backend.mock.InterviewAiException;
 
 // Keeps validation, lookup, and database failures consistent across API endpoints.
 @RestControllerAdvice
@@ -72,6 +74,19 @@ public class ApiExceptionHandler {
             .body(new ApiError(status, exception.status().toString(), exception.getMessage()));
     }
 
+    @ExceptionHandler(InterviewAiException.class)
+    public ResponseEntity<ApiError> handleInterviewAi(
+        InterviewAiException exception
+    ) {
+        int status = exception.status().value();
+        return ResponseEntity.status(exception.status())
+            .body(new ApiError(
+                status,
+                exception.status().toString(),
+                exception.getMessage()
+            ));
+    }
+
     @ExceptionHandler(ConstraintViolationException.class)
     public ResponseEntity<ApiError> handleConstraintViolation(
         ConstraintViolationException exception
@@ -94,6 +109,18 @@ public class ApiExceptionHandler {
                 HttpStatus.INTERNAL_SERVER_ERROR.value(),
                 "DATABASE_ERROR",
                 "The data could not be saved. Please try again."
+            ));
+    }
+
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ResponseEntity<ApiError> handleConcurrentUpdate(
+        OptimisticLockingFailureException exception
+    ) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+            .body(new ApiError(
+                HttpStatus.CONFLICT.value(),
+                HttpStatus.CONFLICT.toString(),
+                "This interview changed in another request. Refresh the session and try again."
             ));
     }
 

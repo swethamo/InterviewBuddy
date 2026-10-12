@@ -1,8 +1,8 @@
 # Interview Buddy
 
 Interview Buddy is a React frontend with a Spring Boot API for saved prep
-setups, interview history, and on-demand AI answer guidance. The backend uses a
-file-based H2 database for local persistence.
+setups, timed AI mock interviews, interview history, and on-demand AI answer
+guidance. The backend uses a file-based H2 database for local persistence.
 
 ## Folder structure
 
@@ -11,7 +11,7 @@ file-based H2 database for local persistence.
   - `src/App.css` – shared design tokens, layout primitives, and feature styling
   - `src/components/` – render-only screens and focused UI sections
   - `src/hooks/` – setup/history state and persistence hooks
-  - `src/services/` – storage adapters, navigation helpers, and future API contracts
+  - `src/services/` – typed API clients, navigation helpers, and resume extraction
   - `src/types/` – shared domain models for persisted records and setup data
   - `src/index.css` – base resets and global typography rules
 - `backend/` – Spring Boot 4.1.1 / Java 21 API and JPA persistence
@@ -32,9 +32,16 @@ file-based H2 database for local persistence.
    consistent.
 5. Existing local interview history remains untouched until the user explicitly
    imports it. Stable legacy IDs make a partially retried import idempotent.
-6. Recorded questions request answer guidance from the Spring API. The backend
-   calls the configured OpenAI Responses API and returns structured suggestions;
-   generated content remains in frontend state and is not saved to history.
+6. Mock interviews snapshot a saved setup and persist the internal topic plan,
+   question/answer turns, deadline, topic coverage, and final answer-grounded
+   review in the backend. The UI restores the latest session or opens a saved
+   review for that setup.
+7. Mock-interview planning, adaptive question generation, and review use the
+   backend-only OpenAI Responses API. Only the current question is returned
+   while a session is active; planned future questions are never generated or
+   displayed in advance.
+8. Recorded questions request answer guidance from the Spring API. Generated
+   answer guidance remains in frontend state and is not saved to history.
 
 ## Local commands
 
@@ -44,7 +51,7 @@ From `frontend/`:
 - `npm run dev` – start the Vite dev server
 - `npm run build` – type-check and bundle the production build
 - `npm run lint` – run ESLint
-- `npm test` – run focused frontend hook tests
+- `npm test` – run frontend hook and mock-interview component tests
 
 From `backend/`:
 
@@ -87,17 +94,58 @@ backend provider configuration to see the actionable configuration error.
 The history feature has no linkage to saved preparation setups. Therefore the
 first version sends the history question, company, role, round, and optional
 original answer; it does not infer interview type, job description, or extra
-instructions from a separately saved setup. Resume files remain unuploaded and
-unparsed. Generated guidance is not persisted, and users should review and
-personalize every suggestion.
+instructions from a separately saved setup. Generated guidance is not
+persisted, and users should review and personalize every suggestion.
 
 In a second PowerShell terminal, run `cd ..\frontend; npm run dev` to launch the
 Vite app. Its `/api` requests are proxied to `localhost:8080`.
 
+## Mock interviews
+
+Open a saved setup and choose **Start mock interview**. Select 15, 30, 45, or
+60 minutes (30 minutes is the default), then explicitly start the session. The
+countdown begins only after the backend has created the session and its opening
+question. The server deadline is persisted, so refreshing or returning to the
+setup does not reset the timer. Submitted answers survive AI errors; use
+**Retry next question** to continue after a temporary provider failure.
+
+The backend plans role- and round-specific topics, asks one question at a time,
+limits adaptive follow-ups, and saves a review after an early finish or expiry.
+Earlier reviews remain available under **Past mock interviews** for the saved
+setup. The review distinguishes submitted answers from unanswered/skipped
+questions and includes relevance, clarity, completeness, technical-accuracy,
+and improvement feedback for each submitted answer.
+
+PDF and DOCX resumes are parsed in the browser when selected in the saved
+setup. Extracted text is editable and is saved as setup context; the resume file
+itself is not uploaded. Scanned/image-only PDFs need text pasted manually.
+Job-description links are not fetched, so paste the job-description text into
+the setup to include its contents in interview context.
+
+Voice input uses the browser's native `SpeechRecognition`/`webkitSpeechRecognition`
+API. Browser support and microphone permissions vary. Recognition is not
+available in every browser; typed answers remain available as a fallback.
+Stopping recognition does not submit the answer. Review and edit the transcript
+in the answer field, then submit it explicitly. The app does not store audio.
+Speech recognition may use browser-provided services; consult the browser
+vendor's privacy terms.
+
+AI setup is shared with answer guidance:
+
+- `ANSWER_GENERATION_PROVIDER=openai`
+- `OPENAI_API_KEY=<backend-only key>`
+- `ANSWER_GENERATION_MODEL=gpt-4.1-mini` (or another Responses API model that
+  supports strict structured output)
+- optional `OPENAI_BASE_URL` and `ANSWER_GENERATION_TIMEOUT`
+
+If provider configuration is missing or unsupported, the mock-interview screen
+explains that before allowing a session to start. Do not put credentials in
+frontend environment variables or committed files.
+
 ## Implemented features
 
-- Interview preparation flow with saved setups, setup editing, and mock-session
-  placeholders
+- Interview preparation flow with saved setups, setup editing, and persistent,
+  timed, adaptive mock interviews
 - Backend-persisted interview history with company/role/resume context, rounds,
   questions, and optional original answers
 - On-demand OpenAI answer guidance with relevant keywords and optional original
@@ -105,17 +153,18 @@ Vite app. Its `/api` requests are proxied to `localhost:8080`.
 - One-time, explicit import of legacy browser interview history with retry-safe
   progress markers
 - Backend-persisted prep setups plus an explicit legacy-setup import flow
-- Shared resume-file validation and optional context fields
+- Browser-side PDF/DOCX resume text extraction and editable saved context
 - Pastel visual design and responsive layout updates for desktop and mobile
 
 ## Demo limitations
 
-- No company research, JD URL fetching, resume parsing, or code execution is
-  connected.
+- No company research, JD URL fetching, or code execution is connected.
 - No authenticated account sync is implemented; local API data is stored in the
   developer's H2 database.
-- Files are selected temporarily in-browser and are not uploaded or processed.
-- No real mock-interview session engine is implemented.
+- Resume files are selected temporarily and parsed in-browser; only extracted
+  text and the filename are saved in the setup.
+- Mock interview voice input depends on browser speech-recognition support and
+  permissions; typed answers work without a microphone.
 
 ## Future integration points
 

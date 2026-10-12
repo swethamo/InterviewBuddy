@@ -5,6 +5,7 @@ import {
   INTERVIEW_TYPE_OPTIONS,
   normalizeInterviewType,
 } from "../services/interviewTypes";
+import { extractResumeText } from "../services/resumeExtraction";
 import type { InterviewSetup } from "../types/interviewSetup";
 
 type InterviewSetupFormProps = {
@@ -50,6 +51,7 @@ function InterviewSetupForm({
   );
   const [resumeText, setResumeText] = useState(setup?.resumeText ?? "");
   const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [isExtractingResume, setIsExtractingResume] = useState(false);
   const [resumeError, setResumeError] = useState("");
   const [resumeRemoved, setResumeRemoved] = useState(false);
   const [isContextOpen, setIsContextOpen] = useState(
@@ -62,14 +64,10 @@ function InterviewSetupForm({
   );
   const resumeInputRef = useRef<HTMLInputElement>(null);
 
-  function handleResumeChange(event: ChangeEvent<HTMLInputElement>) {
+  async function handleResumeChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
 
     if (!file) return;
-
-    setResumeFile(null);
-    setResumeRemoved(true);
-    setResumeError("");
 
     const extension = file.name.split(".").pop()?.toLowerCase();
     const maxSize = 5 * 1024 * 1024;
@@ -86,8 +84,23 @@ function InterviewSetupForm({
       return;
     }
 
-    setResumeRemoved(false);
-    setResumeFile(file);
+    setResumeError("");
+    setIsExtractingResume(true);
+    try {
+      const extractedText = await extractResumeText(file);
+      setResumeFile(file);
+      setResumeRemoved(false);
+      setResumeText(extractedText);
+    } catch (error) {
+      setResumeFile(null);
+      setResumeError(
+        error instanceof Error
+          ? error.message
+          : "The resume could not be extracted. Paste its text instead.",
+      );
+    } finally {
+      setIsExtractingResume(false);
+    }
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -207,7 +220,7 @@ function InterviewSetupForm({
           <div className="prep-context-fields">
             <div className="prep-resume-field">
               <label htmlFor={resumeInputId}>
-                Resume file selection (not uploaded or read yet)
+                Select a PDF or DOCX resume (up to 5 MB)
               </label>
               <input
                 ref={resumeInputRef}
@@ -216,16 +229,21 @@ function InterviewSetupForm({
                 accept=".pdf,.docx"
                 onChange={handleResumeChange}
                 aria-describedby={resumeHelpId}
+                disabled={isExtractingResume}
               />
               <small id={resumeHelpId}>
-                This keeps file metadata only; the app does not upload or read the
-                file automatically.
+                Text is extracted in this browser and saved as interview context.
+                Selecting a file replaces the current resume context; review or
+                edit the extracted text below before saving.
               </small>
 
+              {isExtractingResume && (
+                <p role="status">Extracting resume text…</p>
+              )}
               {resumeFile && (
                 <div className="prep-resume-status">
                   <p role="status">
-                    Selected: <strong>{resumeFile.name}</strong>
+                    Extracted from: <strong>{resumeFile.name}</strong>
                   </p>
                   <button
                     className="secondary-button"
@@ -272,6 +290,7 @@ function InterviewSetupForm({
                 id={descriptionInputId}
                 rows={6}
                 placeholder="Paste the job description here"
+                maxLength={20000}
                 value={jobDescription}
                 onChange={(event) => setJobDescription(event.target.value)}
               />
@@ -283,6 +302,7 @@ function InterviewSetupForm({
                 id={resumeTextInputId}
                 rows={5}
                 placeholder="Paste a brief summary of your experience, strengths, or project wins for this role"
+                maxLength={30000}
                 value={resumeText}
                 onChange={(event) => setResumeText(event.target.value)}
               />
@@ -296,6 +316,7 @@ function InterviewSetupForm({
                 id={instructionsInputId}
                 rows={3}
                 placeholder="Ex: Ask questions about my projects based on my resume"
+                maxLength={10000}
                 value={instructions}
                 onChange={(event) => setInstructions(event.target.value)}
               />
@@ -306,7 +327,7 @@ function InterviewSetupForm({
         <div className="prep-submit-row">
           <button
             type="submit"
-            disabled={isSaving || !company.trim() || !role.trim()}
+            disabled={isSaving || isExtractingResume || !company.trim() || !role.trim()}
           >
             {isSaving ? "Saving…" : setup ? "Save changes" : "Save setup"}
           </button>
@@ -314,7 +335,7 @@ function InterviewSetupForm({
             className="secondary-button"
             type="button"
             onClick={onCancel}
-            disabled={isSaving}
+            disabled={isSaving || isExtractingResume}
           >
             Cancel
           </button>
