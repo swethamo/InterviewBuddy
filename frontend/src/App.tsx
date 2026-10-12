@@ -191,6 +191,7 @@ function App() {
 
       {activeScreen === "prepMock" && activeSetup && (
         <MockInterview
+          key={activeSetup.id}
           setup={activeSetup}
           onBack={() => navigatePrep("list")}
         />
